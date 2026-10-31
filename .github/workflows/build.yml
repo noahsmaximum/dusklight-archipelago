@@ -158,7 +158,10 @@ jobs:
           GH_TOKEN: ${{github.token}}
         run: |
           # .github/release-notes.md always opens with the install guide; update its
-          # "What's new" section as part of every version bump.
+          # "What's new" section as part of every version bump. A tag with a suffix
+          # (v1.8.0-beta.1) is published as a prerelease.
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" \
             combined/*.dusk combined/*.apworld presets/*.yaml \
-            --verify-tag --title "$GITHUB_REF_NAME" --notes-file .github/release-notes.md
+            --verify-tag --title "$GITHUB_REF_NAME" --notes-file .github/release-notes.md $pre

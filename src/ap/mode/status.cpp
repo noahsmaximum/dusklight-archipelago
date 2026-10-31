@@ -99,6 +99,12 @@ static ModResult build_status_tab(ModContext* ctx, UiWindowHandle, UiElementHand
     b2.on_pressed = press_disconnect;
     svc_mng.ui->pane_add_control(ctx, left, &b2, nullptr);
 
+    svc_mng.ui->pane_add_section(ctx, left, "Tracker");
+    add_bound(ctx, left, UI_CONTROL_TOGGLE, "Strike out finished players' checks",
+        g_cfgSkipFinished,
+        "Checks holding an item for a player who has already finished their game are struck "
+        "out in the tracker and left off the in-logic list: nobody needs those items any more.");
+
     svc_mng.ui->pane_add_section(ctx, left, "Other players' items");
     add_bound(ctx, left, UI_CONTROL_TOGGLE, "Show as game boxes", g_cfgBoxes,
         "Items that belong to other worlds show as the box of the game they're for, with its "

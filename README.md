@@ -75,9 +75,10 @@ mismatched ones are refused. For a self-hosted server with a self-signed certifi
 The **Archipelago** tab (F1) also has:
 
 - **Tracker**: your check progress and what's in logic right now. Pick a region to see all its
-  checks. Green dot = in logic, hollow = not yet, gray and crossed out = done. It uses the
-  seed's own logic, so it matches Archipelago. The save must have connected to its room, which
-  it does on load.
+  checks. Green dot = in logic, hollow = not yet, gray and crossed out = done. Checks holding an
+  item for a player who has already finished are crossed out too ("not needed"), so you can skip
+  them; turn that off on the Status tab. It uses the seed's own logic, so it matches
+  Archipelago. The save must have connected to its room, which it does on load.
 - **Hints**: every hint involving you, meaning where your items are and which of other players'
   items are in your world. It shows your hint points and the cost of a hint, and lets you
   request hints by item or location. You can mark hints for your own items as Priority, No

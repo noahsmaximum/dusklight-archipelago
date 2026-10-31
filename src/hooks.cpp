@@ -1877,7 +1877,7 @@ HookAction hookPreSetGetSubBgm(ModContext*, void* args, void*, void*) {
     // Another world's item: the jingle follows its Archipelago classification. Traps have no
     // jingle of their own in the game, so they get the save menu's "Continue? No" sound.
     if (i_itemNo == dItemNo_Randomizer_NOENTRY_220_e) {
-        switch (ap::ap_item_importance()) {
+        switch (ap::ap_item_importance(i_this)) {
         case ap::ItemImportance::Progression: se_type = SETYPE_ITEM_GET; break;
         case ap::ItemImportance::Useful: se_type = SETYPE_ITEM_GET_MINI; break;
         case ap::ItemImportance::Filler: se_type = SETYPE_ITEM_GET_ME; break;

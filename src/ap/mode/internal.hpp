@@ -126,9 +126,14 @@ inline std::unordered_map<std::string, std::string> g_placementOwner;
 inline std::unordered_map<std::string, int> g_placementFlags;
 // Item actors that resolved to an AP item -> their location (from the check resolver).
 inline std::unordered_map<const void*, std::string> g_actorLocation;
+// Give tag (fopAc_ac_c::mItemGiveTag) -> location. The item Link holds up carries its check's
+// tag, so it's matched to its own location rather than to whichever AP item resolved last:
+// another one spawning nearby mid-pickup used to swap the held box's cover (issue #4).
+inline std::unordered_map<uint32_t, std::string> g_tagLocation;
 // The item Link is holding up: its demo actor carries the pickup's committed result, which
 // never passes the resolver, so it's matched to the pickup's location here instead.
 inline const void* g_heldActor = nullptr;
+inline uint32_t g_heldTag = 0;
 inline std::string g_heldLocation;
 inline std::unordered_map<std::string, std::string> g_expected;      // location name -> item AP expects
 inline std::unordered_map<std::string, std::vector<std::string>> g_checkToLocations;
@@ -254,6 +259,7 @@ inline ConfigVarHandle g_cfgDebugLog = 0;
 inline ConfigVarHandle g_cfgBoxes = 0;     // other worlds' items as game boxes
 inline ConfigVarHandle g_cfgSgdbKey = 0;   // the player's SteamGridDB API key
 inline ConfigVarHandle g_cfgBoxChoice = 0; // 0: not asked yet, 1: game boxes, 2: Sols
+inline ConfigVarHandle g_cfgSkipFinished = 0; // strike out checks holding finished players' items
 template <typename T>
 bool read_blob(const char* name, T& out) {
     size_t size = 0;
@@ -330,9 +336,10 @@ struct WorkerResults {
     std::unordered_set<std::string> reach;
 };
 inline WorkerResults g_workers;
-enum class CheckState { Done, InLogic, NotYet, Unknown };
+// Skippable: not done, but its item belongs to a player who has already finished.
+enum class CheckState { Done, InLogic, NotYet, Unknown, Skippable };
 struct RegionCounts {
-    size_t total = 0, done = 0, inLogic = 0;
+    size_t total = 0, done = 0, inLogic = 0, skippable = 0;
 };
 
 // The window's styles: tracker rows, and Archipelago's usual colors for the message log.
@@ -347,6 +354,8 @@ inline constexpr const char* kWindowRcss = R"(
 .ap-unknown .ap-dot { border: 2dp #d0d0d0; }
 .ap-done { color: #6c6c6c; text-decoration: line-through; }
 .ap-done .ap-dot { background-color: #6c6c6c; }
+.ap-skip { color: #6c6c6c; text-decoration: line-through; }
+.ap-skip .ap-dot { border: 2dp #6c6c6c; }
 .ap-head { display: block; margin-top: 10dp; margin-bottom: 2dp; font-weight: bold; color: #e8c867; }
 .ap-legend > span { margin-right: 18dp; }
 .ap-quiet { color: #a6a6a6; }
@@ -411,6 +420,8 @@ int64_t cfg_int(ConfigVarHandle h, int64_t fallback);
 // mode/slot.cpp
 const std::vector<TrackerRegion>& tracker_regions();
 std::vector<std::string> locations_for_check(const char* check);
+// The location of the check an actor was created for (its give tag), or "" if unknown.
+std::string location_of_actor(const void* actor);
 bool load_slot_data(const json& slotData, std::string& err);
 std::filesystem::path seed_base(const std::string& seedName, const std::string& slot);
 void start_generation(const json& slotData, const std::string& slot);

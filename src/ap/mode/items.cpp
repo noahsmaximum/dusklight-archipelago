@@ -164,7 +164,8 @@ bool resolve_check(ModContext*, const ItemCheckInfo* info, ItemCheckResolution* 
             if (info->giver_actor != nullptr) {
                 g_actorLocation[info->giver_actor] = locs.front();  // for its box (see draw)
             }
-            g_heldActor = nullptr;  // a new pickup: the next held item is this one
+            // A new pickup: the next held item is this one, unless its give tag says otherwise.
+            g_heldActor = nullptr;
         }
     }
     return false;

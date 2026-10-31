@@ -7,7 +7,7 @@ Features
 * Item jingles match how important the item is to its owner: the full fanfare for progression, smaller ones for useful items and filler, and a "nope" sound for traps.
 * Built-in Archipelago tab (F1):
    * Status: connection, reconnect or change server, death link toggle
-   * Tracker showing which checks are in logic right now, worked out from the seed's own logic
+   * Tracker showing which checks are in logic right now, worked out from the seed's own logic. Checks holding items for players who've already finished get crossed out so you can skip them
    * Hints: every hint involving you, request by item or location, set Priority/Avoid
    * Room chat and server commands, with emoji and an emoji picker
 * Optional HUD overlay you can put anywhere on screen. It shows status, checks, received items, hints, chat and death link.

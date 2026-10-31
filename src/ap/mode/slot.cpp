@@ -7,6 +7,7 @@ namespace ap::internal {
 // Used only in this file; defined below.
 static int region_of(const YAML::Node& categories);
 static void build_check_map();
+static void build_tag_map();
 static std::string sanitize(std::string s);
 static bool generate_seed(const json& slotData, const std::string& slot, std::string& outHash, std::string& outError);
 
@@ -120,6 +121,43 @@ static void build_check_map() {
     }
 }
 
+// Dusklight interns check names as give tags; asking for each of ours gives the tag the game
+// will put on the actors for that check. Resolved by name: if a future Dusklight renames it,
+// held items fall back to the last resolved location.
+static void build_tag_map() {
+    g_tagLocation.clear();
+    using GiveTagFn = uint32_t (*)(const char*);
+    static GiveTagFn giveTag = [] {
+        void* address = nullptr;
+        for (const char* name : {"?item_give_tag@mods@dusk@@YAIPEBD@Z",
+                 "_ZN4dusk4mods13item_give_tagEPKc"}) {
+            if (svc_mng.hook->resolve(svc_mng.mod_ctx, name, &address, nullptr) == MOD_OK &&
+                address != nullptr) {
+                return reinterpret_cast<GiveTagFn>(address);
+            }
+        }
+        ap_log("dusk::mods::item_give_tag not found; held items use the last resolved location");
+        return static_cast<GiveTagFn>(nullptr);
+    }();
+    if (giveTag == nullptr) {
+        return;
+    }
+    for (const auto& [check, locs] : g_checkToLocations) {
+        if (const uint32_t tag = giveTag(check.c_str()); tag != 0 && !locs.empty()) {
+            g_tagLocation[tag] = locs.front();
+        }
+    }
+}
+
+std::string location_of_actor(const void* actor) {
+    if (actor == nullptr) {
+        return {};
+    }
+    const uint32_t tag = static_cast<const fopAc_ac_c*>(actor)->mItemGiveTag;
+    const auto it = g_tagLocation.find(tag);
+    return it != g_tagLocation.end() ? it->second : std::string{};
+}
+
 std::vector<std::string> locations_for_check(const char* check) {
     if (check == nullptr) {
         return {};
@@ -193,6 +231,7 @@ bool load_slot_data(const json& slotData, std::string& err) {
     }
     g_slotSeed = slotData.value("seed", "");
     build_check_map();
+    build_tag_map();
     g_collectDungeons.clear();
     const json collect = slotData.value("collect_dungeons", json::array());
     for (const auto& d : collect) {

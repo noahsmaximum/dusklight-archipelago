@@ -198,6 +198,11 @@ re-caches the exit form-time cache with every item (Archipelago mode empties the
 cache built from that blocked almost everything), and holds unshuffled dungeons' keys as the
 apworld does. `rig/tracker_parity.py` compares the two sphere by sphere.
 
+"Not needed" checks don't touch logic: on connect the client Gets and SetNotifies every other
+player's `_read_client_status_<team>_<slot>`, and a check whose item (slot data `placements`)
+belongs to a player at CLIENT_GOAL (30) is shown struck out. Item link groups are skipped; they
+have no status of their own.
+
 ### UI and the host
 
 - A control's `help_rml` fills the tab's right pane, replacing whatever else was there, so tabs

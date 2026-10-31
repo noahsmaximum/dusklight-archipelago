@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace ap {
@@ -103,6 +104,10 @@ public:
     std::string gameOfSlotName(const std::string& slotName) const;
     // Every game in the room, one entry each.
     std::vector<std::string> games() const;
+    // Whether the player with this slot name has reached their goal. Bumps statusVersion()
+    // whenever any player's answer changes (the server notifies us live).
+    bool slotFinished(const std::string& slotName) const;
+    uint64_t statusVersion() const { return mStatusVersion; }
 
     static constexpr const char* kGame = "Twilight Princess (Dusklight)";
 
@@ -115,6 +120,8 @@ private:
     void send(const json& packets);
     std::string nextUrl();
     static std::vector<Hint> parse_hints(const json& list);
+    std::string statusKeyPrefix() const;
+    void note_status(const std::string& key, const json& value);
 
     ConnectInfo mInfo{};
     State mState = State::Disconnected;
@@ -130,6 +137,8 @@ private:
     int mHintCostPercent = 0;
     size_t mSlotLocations = 0;
     std::vector<std::string> mPlayerNames;
+    std::unordered_set<int> mFinished;  // slots whose status is CLIENT_GOAL
+    uint64_t mStatusVersion = 0;
 };
 
 // Parses AP's PrintJSON "data" parts into plain text, resolving player/item/location ids with

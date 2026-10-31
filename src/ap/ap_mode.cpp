@@ -91,6 +91,11 @@ ModResult activate() {
         choice.type = CONFIG_VAR_INT;
         choice.default_int = 0;
         svc_mng.config->register_var(svc_mng.mod_ctx, &choice, &g_cfgBoxChoice);
+        ConfigVarDesc skip = CONFIG_VAR_DESC_INIT;
+        skip.name = "skipFinishedChecks";
+        skip.type = CONFIG_VAR_BOOL;
+        skip.default_bool = true;
+        svc_mng.config->register_var(svc_mng.mod_ctx, &skip, &g_cfgSkipFinished);
     }
 
     svc_mng.item->observe_gives(svc_mng.mod_ctx, observe_give, nullptr, &g_observer);
@@ -211,10 +216,17 @@ ModResult open_connect_gate(void* fileSelect) {
     return open_gate_window(fileSelect);
 }
 
-ItemImportance ap_item_importance() {
-    // The pickup resolved its check just before the jingle; unknown counts as progression,
-    // the fanfare it always had.
-    const auto it = g_placementFlags.find(g_lastResolvedApLocation);
+// The location of the item Link is getting right now: the item event partner's give tag
+// names it; otherwise the last check resolved to an AP item.
+static std::string pickup_location(void* link) {
+    const std::string own =
+        location_of_actor(fopAcM_getItemEventPartner(static_cast<fopAc_ac_c*>(link)));
+    return own.empty() ? g_lastResolvedApLocation : own;
+}
+
+ItemImportance ap_item_importance(void* link) {
+    // Unknown counts as progression, the fanfare it always had.
+    const auto it = g_placementFlags.find(pickup_location(link));
     const int flags = it != g_placementFlags.end() ? it->second : 1;
     if (flags & 1) {
         return ItemImportance::Progression;
@@ -245,15 +257,16 @@ void on_get_item_demo(void* link) {
     // Always re-arm from the check being collected right now; the placeholder item has no
     // message of its own, so it must never fall back to whatever was shown last.
     g_armedText.clear();
-    if (!g_lastResolvedApLocation.empty()) {
-        if (const auto it = g_apItemText.find(g_lastResolvedApLocation); it != g_apItemText.end()) {
+    const std::string location = pickup_location(link);
+    if (!location.empty()) {
+        if (const auto it = g_apItemText.find(location); it != g_apItemText.end()) {
             g_armedText = it->second;
         }
     }
     if (g_armedText.empty()) {
         g_armedText = "You found another player's item!";
     }
-    g_heldLocation = g_lastResolvedApLocation;
+    g_heldLocation = location;
     g_armedFrames = 600;
     g_apTextServed = false;  // this pickup's text box claims it when the text is served
     g_apTextBox = nullptr;

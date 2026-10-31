@@ -19,6 +19,10 @@ std::unordered_map<std::string, std::unordered_map<int64_t, std::string>> s_item
 std::unordered_map<std::string, std::unordered_map<int64_t, std::string>> s_locationNames;
 std::unordered_map<int, std::string> s_slotGames;
 std::unordered_map<std::string, std::string> s_slotGamesByName;  // slot name -> game
+std::unordered_map<std::string, int> s_playerSlotsByName;       // slot name -> slot, players only
+
+// ClientStatus.CLIENT_GOAL: the player has finished their game.
+constexpr int kClientGoal = 30;
 
 std::string make_uuid() {
     static std::string uuid;
@@ -51,6 +55,11 @@ const std::string& Client::playerName(int slot) const {
 std::string Client::gameOfSlotName(const std::string& slotName) const {
     const auto it = s_slotGamesByName.find(slotName);
     return it != s_slotGamesByName.end() ? it->second : std::string{};
+}
+
+bool Client::slotFinished(const std::string& slotName) const {
+    const auto it = s_playerSlotsByName.find(slotName);
+    return it != s_playerSlotsByName.end() && mFinished.contains(it->second);
 }
 
 std::vector<std::string> Client::games() const {
@@ -243,10 +252,18 @@ void Client::handle(const json& p) {
         }
         s_slotGames.clear();
         s_slotGamesByName.clear();
+        s_playerSlotsByName.clear();
+        mFinished.clear();
+        ++mStatusVersion;
         if (p.contains("slot_info")) {
             for (const auto& [k, v] : p["slot_info"].items()) {
-                s_slotGames[std::stoi(k)] = v.value("game", "");
+                const int s = std::stoi(k);
+                s_slotGames[s] = v.value("game", "");
                 s_slotGamesByName[v.value("name", "")] = v.value("game", "");
+                // Item link groups (type 2) never report a status of their own.
+                if ((json_num(v, "type", 1) & 2) == 0 && s != mSlot) {
+                    s_playerSlotsByName[v.value("name", "")] = s;
+                }
             }
         }
         mState = State::Connected;
@@ -254,9 +271,14 @@ void Client::handle(const json& p) {
             onConnected(p);
         }
         // Hints live in the server's data storage; read them now and hear about every change.
+        // So are everyone else's statuses, which say when a player has finished (the tracker
+        // strikes out checks holding their items).
         const std::string hintsKey = "_read_hints_" + std::to_string(mTeam) + "_" + std::to_string(mSlot);
-        send(json::array({{{"cmd", "Get"}, {"keys", {hintsKey}}},
-            {{"cmd", "SetNotify"}, {"keys", {hintsKey}}}}));
+        json keys = json::array({hintsKey});
+        for (const auto& [name, s] : s_playerSlotsByName) {
+            keys.push_back(statusKeyPrefix() + std::to_string(s));
+        }
+        send(json::array({{{"cmd", "Get"}, {"keys", keys}}, {{"cmd", "SetNotify"}, {"keys", keys}}}));
     } else if (cmd == "ConnectionRefused") {
         std::string errs;
         for (const auto& e : p.value("errors", json::array())) {
@@ -341,6 +363,37 @@ void Client::handle(const json& p) {
         if (value != nullptr && onHints) {
             onHints(parse_hints(*value));
         }
+        if (cmd == "SetReply" && p.contains("value")) {
+            note_status(p.value("key", ""), p["value"]);
+        } else if (cmd == "Retrieved" && p.contains("keys") && p["keys"].is_object()) {
+            for (const auto& [key, v] : p["keys"].items()) {
+                note_status(key, v);
+            }
+        }
+    }
+}
+
+std::string Client::statusKeyPrefix() const {
+    return "_read_client_status_" + std::to_string(mTeam) + "_";
+}
+
+void Client::note_status(const std::string& key, const json& value) {
+    const std::string prefix = statusKeyPrefix();
+    if (!key.starts_with(prefix)) {
+        return;
+    }
+    const std::string rest = key.substr(prefix.size());
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    if (rest.empty() || rest.size() > 6 || !std::all_of(rest.begin(), rest.end(), digit)) {
+        return;
+    }
+    const int slot = std::stoi(rest);
+    // Statuses only move forward, but a slot can be reported more than once.
+    const bool finished = value.is_number_integer() && value.get<int64_t>() == kClientGoal;
+    if (finished && mFinished.insert(slot).second) {
+        ++mStatusVersion;
+    } else if (!finished && mFinished.erase(slot) > 0) {
+        ++mStatusVersion;
     }
 }
 

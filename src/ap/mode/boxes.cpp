@@ -32,10 +32,14 @@ static std::string game_for_location(const std::string& location) {
 static std::string game_for_actor(const void* actor) {
     std::string location;
     if (fopAcM_GetName(const_cast<void*>(actor)) == fpcNm_Demo_Item_e) {
-        // Held up: the pickup resolved just before this actor appeared (see g_heldActor).
-        if (g_heldActor != actor) {
+        // Held up: its give tag names its check. Without one we know, the pickup resolved just
+        // before this actor appeared (see g_heldActor).
+        const uint32_t tag = static_cast<const fopAc_ac_c*>(actor)->mItemGiveTag;
+        if (g_heldActor != actor || g_heldTag != tag) {
             g_heldActor = actor;
-            g_heldLocation = g_lastResolvedApLocation;
+            g_heldTag = tag;
+            const std::string own = location_of_actor(actor);
+            g_heldLocation = own.empty() ? g_lastResolvedApLocation : own;
         }
         location = g_heldLocation;
     } else if (const auto loc = g_actorLocation.find(actor); loc != g_actorLocation.end()) {

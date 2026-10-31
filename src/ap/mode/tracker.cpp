@@ -12,15 +12,18 @@ constexpr int kInLogicNow = -2;
 constexpr const char* kLegendRml =
     R"(<div class="ap-legend"><span class="ap-in"><span class="ap-dot"></span>in logic</span>)"
     R"(<span class="ap-out"><span class="ap-dot"></span>not yet</span>)"
-    R"(<span class="ap-done"><span class="ap-dot"></span>done</span></div>)";
+    R"(<span class="ap-done"><span class="ap-dot"></span>done</span>)"
+    R"(<span class="ap-skip"><span class="ap-dot"></span>not needed</span></div>)";
 int g_trackerShownRegion = kInLogicNow;
 std::pair<uint64_t, size_t> g_trackerShown{0, 0};
+std::pair<uint64_t, bool> g_finishedSeen{0, true};  // client status version, toggle
 
 }  // namespace
 
 // Used only in this file; defined below.
 static void start_logic_build(const std::filesystem::path& base);
 static void start_reach_search();
+static bool skip_finished_on();
 static CheckState check_state(const TrackerCheck& c);
 static std::string tracker_summary();
 static std::string region_label(int region);
@@ -93,6 +96,12 @@ static void start_reach_search() {
 }
 
 void tick_tracker() {
+    // A player finishing (or the toggle) changes which checks are struck out, not logic.
+    const std::pair<uint64_t, bool> finished{g_client.statusVersion(), skip_finished_on()};
+    if (finished != g_finishedSeen) {
+        g_finishedSeen = finished;
+        ++g_trackerVersion;
+    }
     {
         std::lock_guard lock{g_workers.mutex};
         if (g_workers.logicDone) {
@@ -139,9 +148,24 @@ void tick_tracker() {
     }
 }
 
+static bool skip_finished_on() {
+    bool on = true;
+    if (g_cfgSkipFinished != 0) {
+        svc_mng.config->get_bool(svc_mng.mod_ctx, g_cfgSkipFinished, &on);
+    }
+    return on;
+}
+
 static CheckState check_state(const TrackerCheck& c) {
     if (g_checked.contains(c.id)) {
         return CheckState::Done;
+    }
+    // Our own items never count: g_placementOwner only lists other players' items.
+    if (g_finishedSeen.second) {
+        const auto owner = g_placementOwner.find(c.name);
+        if (owner != g_placementOwner.end() && g_client.slotFinished(owner->second)) {
+            return CheckState::Skippable;
+        }
     }
     if (!g_logic || g_reachInputs == SIZE_MAX) {
         return CheckState::Unknown;
@@ -159,6 +183,7 @@ RegionCounts region_counts(int region) {
         const auto st = check_state(c);
         n.done += st == CheckState::Done;
         n.inLogic += st == CheckState::InLogic;
+        n.skippable += st == CheckState::Skippable;
     }
     return n;
 }
@@ -169,6 +194,9 @@ static std::string tracker_summary() {
     }
     const auto n = region_counts(-1);
     std::string s = fmt::format("{} of {} checks done", n.done, n.total);
+    if (n.skippable > 0) {
+        s += fmt::format(", {} not needed", n.skippable);
+    }
     if (g_logic) {
         s += fmt::format(", {} in logic now", n.inLogic);
     } else if (g_logicBuilding) {
@@ -189,10 +217,11 @@ static std::string region_label(int region) {
 }
 
 static std::string check_row(const TrackerCheck& c, CheckState st) {
-    const char* cls = st == CheckState::Done      ? "ap-done"
-                      : st == CheckState::InLogic ? "ap-in"
-                      : st == CheckState::NotYet  ? "ap-out"
-                                                  : "ap-unknown";
+    const char* cls = st == CheckState::Done        ? "ap-done"
+                      : st == CheckState::InLogic   ? "ap-in"
+                      : st == CheckState::NotYet    ? "ap-out"
+                      : st == CheckState::Skippable ? "ap-skip"
+                                                    : "ap-unknown";
     return fmt::format(R"(<div class="ap-row {}"><span class="ap-dot"></span>{}</div>)", cls,
         rml_escape(c.name));
 }
@@ -229,7 +258,8 @@ static std::string region_rml(int region) {
     }
     out += fmt::format(R"(<div class="ap-head">{}</div>)", rml_escape(region_label(region)));
     for (const auto want :
-        {CheckState::InLogic, CheckState::Unknown, CheckState::NotYet, CheckState::Done}) {
+        {CheckState::InLogic, CheckState::Unknown, CheckState::NotYet, CheckState::Skippable,
+            CheckState::Done}) {
         for (const auto& c : g_trackerChecks) {
             if (c.region == region && check_state(c) == want) {
                 out += check_row(c, want);
