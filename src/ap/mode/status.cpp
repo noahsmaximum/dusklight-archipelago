@@ -119,8 +119,8 @@ static ModResult build_status_tab(ModContext* ctx, UiWindowHandle, UiElementHand
     again.kind = UI_CONTROL_BUTTON;
     again.label = "Download covers again";
     again.help_rml = "Forgets the saved covers (and which games had none) and downloads them "
-                     "again. To use your own art for a game, put a PNG or JPG named after the "
-                     "game in randomizer/archipelago/covers/custom.";
+                     "again; covers you picked stay picked. To pick a different cover for a "
+                     "game, or use your own art, go to the Covers tab.";
     again.on_pressed = [](ModContext*, void*) { covers::refetch(); };
     svc_mng.ui->pane_add_control(ctx, left, &again, nullptr);
     return MOD_OK;
@@ -147,8 +147,8 @@ static ModResult update_status_tab(ModContext* ctx, void*, ModError*) {
 }
 
 void open_status_window(ModContext*, void*) {
-    static UiTabDesc tabs[5] = {UI_TAB_DESC_INIT, UI_TAB_DESC_INIT, UI_TAB_DESC_INIT,
-        UI_TAB_DESC_INIT, UI_TAB_DESC_INIT};
+    static UiTabDesc tabs[6] = {UI_TAB_DESC_INIT, UI_TAB_DESC_INIT, UI_TAB_DESC_INIT,
+        UI_TAB_DESC_INIT, UI_TAB_DESC_INIT, UI_TAB_DESC_INIT};
     tabs[0].title = "Status";
     tabs[0].build = build_status_tab;
     tabs[0].update = update_status_tab;
@@ -163,6 +163,9 @@ void open_status_window(ModContext*, void*) {
     tabs[3].update = update_messages_tab;
     tabs[4].title = "Overlay";
     tabs[4].build = build_overlay_tab;
+    tabs[5].title = "Covers";
+    tabs[5].build = build_covers_tab;
+    tabs[5].update = update_covers_tab;
     // The picker's buttons show their emoji as a background image.
     static const std::string rcss = [] {
         std::string out = kWindowRcss;
@@ -176,7 +179,7 @@ void open_status_window(ModContext*, void*) {
     }();
     UiWindowDesc desc = UI_WINDOW_DESC_INIT;
     desc.tabs = tabs;
-    desc.tab_count = 5;
+    desc.tab_count = 6;
     desc.rcss = rcss.c_str();
     desc.on_closed = [](ModContext*, UiWindowHandle, void*) {
         g_statusWindow = 0;
@@ -187,6 +190,7 @@ void open_status_window(ModContext*, void*) {
         g_logElem = 0;
         g_hintsSummary = g_hintDetails = 0;
         g_hintsList = 0;
+        forget_covers_tab();
     };
     svc_mng.ui->window_push(svc_mng.mod_ctx, &desc, &g_statusWindow);
 }

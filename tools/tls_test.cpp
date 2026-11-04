@@ -292,6 +292,11 @@ bool check_covers() {
         {"covers: failed search", id(pick_game("Hollow Knight", json::parse(R"({"success":false})"))), "none"},
         {"covers: remake -> newest", id(pick_game("Resident Evil 2 Remake", re2)), "29143"},
         {"covers: fallback term", ap::cover_art::fallback_term("Resident Evil 2 Remake"), "Resident Evil 2"},
+        {"covers: platform dropped", ap::cover_art::fallback_term("Link's Awakening Switch"), "Link's Awakening"},
+        {"covers: platform words", ap::cover_art::fallback_term("Link's Awakening (Nintendo Switch)"), "Link's Awakening"},
+        {"covers: title kept", ap::cover_art::fallback_term("Hollow Knight"), ""},
+        {"covers: confident match", std::to_string(ap::cover_art::match_game("Ocarina of Time", oot)->score >= ap::cover_art::kConfidentScore), "1"},
+        {"covers: candidates", std::to_string(ap::cover_art::candidates(re2).size()), "3"},
         {"covers: portrait grid first", pick_grid(grids), "https://cdn/tall.jpg"},
         {"covers: url encoding", url_encode("Pok\xC3\xA9mon: Red & Blue"), "Pok%C3%A9mon%3A%20Red%20%26%20Blue"},
         {"covers: file stem", file_stem("A Link to the Past").substr(0, 19), "a-link-to-the-past-"},
@@ -313,14 +318,22 @@ int covers_live(int argc, char** argv) {
     using nlohmann::json;
     std::ifstream in(argv[2]);
     const json all = json::parse(in);
+    // "<game>" holds the search by its name; "<game>\tfallback", if there is one, the second
+    // search the mod makes with fallback_term() when the first finds nothing.
     for (const auto& [game, response] : all.items()) {
-        const auto picked = ap::cover_art::has_box(game) ? ap::cover_art::pick_game(game, response)
-                                                          : std::nullopt;
-        std::string name = ap::cover_art::has_box(game) ? "(none: stays a Sol)" : "(no box: Archipelago-only)";
-        for (const auto& g : response.value("data", json::array())) {
-            if (picked && g.value("id", int64_t{0}) == *picked) {
-                name = g.value("name", std::string{});
+        if (game.find('\t') != std::string::npos) {
+            continue;
+        }
+        std::optional<ap::cover_art::Match> picked;
+        if (ap::cover_art::has_box(game)) {
+            picked = ap::cover_art::match_game(game, response);
+            if (!picked && all.contains(game + "\tfallback")) {
+                picked = ap::cover_art::match_game(game, all[game + "\tfallback"]);
             }
+        }
+        std::string name = ap::cover_art::has_box(game) ? "(none: stays a Sol)" : "(no box: Archipelago-only)";
+        if (picked) {
+            name = picked->name + (picked->score < ap::cover_art::kConfidentScore ? "  [best guess]" : "");
         }
         std::printf("%-40s -> %s\n", game.c_str(), name.c_str());
     }
@@ -436,6 +449,13 @@ int main(int argc, char** argv) {
 
     if (argc >= 3 && std::strcmp(argv[1], "--covers") == 0) {
         return covers_live(argc, argv);
+    }
+    // --fallback-terms <game>...: what the mod searches second for each game ("" for none).
+    if (argc >= 2 && std::strcmp(argv[1], "--fallback-terms") == 0) {
+        for (int i = 2; i < argc; ++i) {
+            std::printf("%s\n", ap::cover_art::fallback_term(argv[i]).c_str());
+        }
+        return 0;
     }
 
     // --offline: only the in-process checks, none of the TLS cases against real servers (CI).

@@ -160,6 +160,7 @@ set(RANDOMIZER_SOURCES
         src/ap/mode/hints.cpp
         src/ap/mode/overlay.cpp
         src/ap/mode/status.cpp
+        src/ap/mode/covers.cpp
         src/ap/ap_box.cpp
         src/ap/cover_art.cpp
 )

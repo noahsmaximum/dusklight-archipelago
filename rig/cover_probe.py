@@ -75,6 +75,15 @@ def main():
         url = "https://www.steamgriddb.com/api/v2/search/autocomplete/" + urllib.parse.quote(term, safe="")
         replies[game] = json.loads(get(url))
         time.sleep(0.25)
+    # The mod searches again with a shorter name when the full one finds nothing.
+    terms = subprocess.run([str(paths.TLS_TEST), "--fallback-terms", *games], check=True,
+                           capture_output=True, text=True, encoding="utf-8").stdout.splitlines()
+    for game, term in zip(games, terms):
+        if term.strip():
+            url = ("https://www.steamgriddb.com/api/v2/search/autocomplete/" +
+                   urllib.parse.quote(term.strip(), safe=""))
+            replies[game + "\tfallback"] = json.loads(get(url))
+            time.sleep(0.25)
     (out / "search.json").write_text(json.dumps(replies, indent=1), encoding="utf-8")
 
     images = []

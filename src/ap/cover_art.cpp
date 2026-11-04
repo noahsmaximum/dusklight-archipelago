@@ -43,6 +43,7 @@ const std::unordered_map<std::string, Alias>& aliases() {
         {"Pokemon FireRed and LeafGreen", {"Pokemon FireRed"}},
         {"SMZ3", {"Super Metroid"}},
         {"Starcraft 2", {"StarCraft II: Wings of Liberty"}},
+        {"Civilization VI", {"Sid Meier's Civilization VI"}},
         {"DOOM 1993", {"Doom"}},
         {"Castlevania 64", {"Castlevania", 1999}},
         {"Celeste (Open World)", {"Celeste"}},
@@ -258,8 +259,13 @@ std::string fallback_term(const std::string& apGame) {
         const size_t close = term.find(')', open);
         term.erase(open, close == std::string::npos ? std::string::npos : close - open + 1);
     }
+    // Platforms too: "Link's Awakening Switch" is listed as "The Legend of Zelda: Link's
+    // Awakening".
     static const char* const kEditions[] = {"remake", "remastered", "remaster", "hd",
-        "definitive", "enhanced", "edition", "deluxe", "classic", "redux", "reloaded"};
+        "definitive", "enhanced", "edition", "deluxe", "classic", "redux", "reloaded", "switch",
+        "nintendo", "ns", "nsw", "n64", "gba", "gbc", "gb", "snes", "sfc", "nes", "famicom",
+        "genesis", "ps1", "ps2", "ps3", "ps4", "psx", "psp", "vita", "ds", "3ds", "wii", "wiiu",
+        "gc", "gcn", "gamecube", "pc", "dreamcast", "saturn", "xbox"};
     for (bool trimmed = true; trimmed;) {
         trimmed = false;
         while (!term.empty() && (term.back() == ' ' || term.back() == '-' || term.back() == ':')) {
@@ -285,9 +291,14 @@ std::string fallback_term(const std::string& apGame) {
 
 namespace {
 
-std::optional<int64_t> best_match(const json& response,
+int year_of(const json& g) {
+    const bool dated = g.contains("release_date") && g["release_date"].is_number_integer();
+    return dated ? static_cast<int>(1970 + g["release_date"].get<int64_t>() / 31556952) : 0;
+}
+
+std::optional<Match> best_match(const json& response,
     const std::vector<std::vector<std::string>>& queries, int year, bool preferNewest) {
-    std::optional<int64_t> best;
+    std::optional<Match> best;
     int bestScore = 0;
     for (const auto& g : response.value("data", json::array())) {
         if (!g.is_object() || !g.contains("id") || !g["id"].is_number_integer()) {
@@ -302,8 +313,7 @@ std::optional<int64_t> best_match(const json& response,
         if (s <= 0) {
             continue;
         }
-        const bool dated = g.contains("release_date") && g["release_date"].is_number_integer();
-        const int released = dated ? static_cast<int>(1970 + g["release_date"].get<int64_t>() / 31556952) : 0;
+        const int released = year_of(g);
         if (year != 0 && released == year) {
             s += 200;  // the one from the right year, of several with this name
         }
@@ -318,7 +328,7 @@ std::optional<int64_t> best_match(const json& response,
         }
         if (s > bestScore) {
             bestScore = s;
-            best = g["id"].get<int64_t>();
+            best = Match{g["id"].get<int64_t>(), original, s};
         }
     }
     return bestScore >= 300 ? best : std::nullopt;
@@ -327,6 +337,24 @@ std::optional<int64_t> best_match(const json& response,
 }  // namespace
 
 std::optional<int64_t> pick_game(const std::string& apGame, const json& response) {
+    const auto match = match_game(apGame, response);
+    return match ? std::optional<int64_t>{match->id} : std::nullopt;
+}
+
+std::vector<Candidate> candidates(const json& response) {
+    std::vector<Candidate> out;
+    if (!response.is_object() || !response.value("success", false)) {
+        return out;
+    }
+    for (const auto& g : response.value("data", json::array())) {
+        if (g.is_object() && g.contains("id") && g["id"].is_number_integer()) {
+            out.push_back({g["id"].get<int64_t>(), g.value("name", std::string{}), year_of(g)});
+        }
+    }
+    return out;
+}
+
+std::optional<Match> match_game(const std::string& apGame, const json& response) {
     if (!response.is_object() || !response.value("success", false)) {
         return std::nullopt;
     }

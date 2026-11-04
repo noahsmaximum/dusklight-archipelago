@@ -3,7 +3,7 @@ You don't need a separate client and you don't patch anything. Pick Archipelago 
 Features
 
 * Connects from inside the game. Checks go out as you collect them, and items from other players arrive automatically. Anything you pick up while disconnected gets sent the next time you connect, and saves reconnect on their own.
-* Other players' items say whose they are when you find them ("You found Ava's Gunpowder!") and can show as their game's box with its cover art, on the ground, in Link's hands and in the text box. Covers come from SteamGridDB with your own free API key; without one they stay Sols.
+* Other players' items say whose they are when you find them ("You found Ava's Gunpowder!") and can show as their game's box with its cover art, on the ground, in Link's hands and in the text box. Covers come from SteamGridDB with your own free API key; without one they stay Sols. If a game's cover is wrong or missing, search for the right one, switch it to a Sol, or use your own art from the Covers tab.
 * Item jingles match how important the item is to its owner: the full fanfare for progression, smaller ones for useful items and filler, and a "nope" sound for traps.
 * Built-in Archipelago tab (F1):
    * Status: connection, reconnect or change server, death link toggle

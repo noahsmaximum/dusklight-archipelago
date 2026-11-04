@@ -500,4 +500,9 @@ ModResult build_overlay_tab(ModContext* ctx, UiWindowHandle, UiElementHandle lef
 // mode/status.cpp
 void open_status_window(ModContext*, void*);
 
+// mode/covers.cpp
+ModResult build_covers_tab(ModContext* ctx, UiWindowHandle, UiElementHandle left, UiElementHandle right, void*, ModError*);
+ModResult update_covers_tab(ModContext* ctx, void*, ModError*);
+void forget_covers_tab();
+
 }  // namespace ap::internal

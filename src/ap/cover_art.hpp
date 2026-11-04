@@ -20,14 +20,33 @@ bool has_box(const std::string& apGame);
 // What to search SteamGridDB for. Most Archipelago game names are the store name; a few aren't.
 std::string search_term(const std::string& apGame);
 
-// The name without brackets or trailing edition words ("Remake", "HD", ...), to search again
-// with when the full name finds nothing; "" if that's the same search.
+// The name without brackets or trailing edition and platform words ("Remake", "HD", "Switch",
+// ...), to search again with when the full name finds nothing; "" if that's the same search.
 std::string fallback_term(const std::string& apGame);
+
+// Scores of 500 and up are a confident match (the name, the title under a series name, or the
+// name at the start of a longer one); below that it's a best guess the player should check.
+constexpr int kConfidentScore = 500;
+
+struct Match {
+    int64_t id = 0;
+    std::string name;  // SteamGridDB's name for it
+    int score = 0;
+};
 
 // The best game in a /search/autocomplete response for this Archipelago game, or nullopt when
 // nothing is close enough (a wrong box is worse than the Sol). Falls back to fallback_term's
 // words, preferring the newest game of that name for a remake.
+std::optional<Match> match_game(const std::string& apGame, const nlohmann::json& response);
 std::optional<int64_t> pick_game(const std::string& apGame, const nlohmann::json& response);
+
+// Every game in a /search/autocomplete response, for the player to choose from.
+struct Candidate {
+    int64_t id = 0;
+    std::string name;
+    int year = 0;  // 0 if SteamGridDB doesn't say
+};
+std::vector<Candidate> candidates(const nlohmann::json& response);
 
 // The image to download from a /grids response (a thumbnail, portrait art first), or "".
 std::string pick_grid(const nlohmann::json& response);

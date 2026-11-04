@@ -114,9 +114,13 @@ Other players' items can appear as their game's box art instead of a Sol. Covers
 [SteamGridDB](https://www.steamgriddb.com) using your free API key (sign in, then Preferences →
 API). The mod asks on first play, and you can change it later under **Other players' items** on
 the Status page (F1). Covers download once to `\TwilitRealm\Dusklight\mod_data\com.noahsmaximum.dusklight_archipelago\archipelago\covers`. Games
-SteamGridDB doesn't have stay Sols, and so does everything if there's no key. For custom art, put
-a PNG or JPG named after the game (as the room lists it) in
-`randomizer/archipelago/covers/custom`.
+SteamGridDB doesn't have stay Sols, and so does everything if there's no key.
+
+The **Covers** tab lists every game in the room and the cover it got. Covers the mod wasn't sure
+about are marked "best guess". Pick a game to search SteamGridDB yourself and choose the right
+one, switch it to the Sol, or use your own art: a PNG or JPG named after the game (as the room
+lists it) in the `covers\custom` folder next to the downloads. The tab shows the exact path.
+Your choices are remembered for every room.
 
 <p align="center">
   <img src="docs/images/game-box.webp" alt="Link holding a Shadow the Hedgehog game box, with the cover in the text box" width="80%">

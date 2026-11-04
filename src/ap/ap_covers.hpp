@@ -7,6 +7,8 @@
 //
 // Game thread only.
 
+#include "cover_art.hpp"
+
 #include <dolphin/gx/GXStruct.h>
 
 #include <string>
@@ -37,6 +39,42 @@ const Cover* get(const std::string& game);
 std::string status();
 
 // Forget the downloaded covers (and what SteamGridDB didn't have) and fetch them again.
+// Covers the player chose themselves are kept.
 void refetch();
+
+// The Covers tab: every game wanted this session, where its cover comes from, and the player's
+// own picks, which are remembered for every room.
+enum class Source {
+    Pending,    // still downloading or decoding
+    Automatic,  // matched by name
+    Chosen,     // the player picked it
+    Custom,     // the player's own image in covers/custom
+    Sol,        // none: no art found, the player asked for the Sol, or it failed
+};
+struct GameCover {
+    std::string game;
+    Source source = Source::Pending;
+    std::string matched;  // SteamGridDB's name for the game whose art it is ("" if none)
+    bool unsure = false;  // matched automatically, but not confidently: worth checking
+    bool solChosen = false;
+};
+std::vector<GameCover> games();
+// Bumped whenever games(), the search results or status() change.
+uint64_t version();
+
+// A search the player runs for one game. Replaces the previous results.
+void search(const std::string& term);
+bool searching();
+const std::vector<cover_art::Candidate>& results();
+const std::string& search_message();  // why there are no results, or ""
+
+// Use this SteamGridDB game's art for an Archipelago game, from now on.
+void choose(const std::string& game, int64_t id, const std::string& name);
+// No box for this game, from now on: its items are Sols.
+void use_sol(const std::string& game);
+// Forget the player's choice (or recheck covers/custom) and find the cover again.
+void automatic(const std::string& game);
+// Where the player's own image for this game goes.
+std::string custom_path(const std::string& game);
 
 }  // namespace ap::covers

@@ -13,6 +13,7 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <deque>
@@ -34,19 +35,24 @@ using Clock = std::chrono::steady_clock;
 constexpr int64_t kMissingRetrySeconds = 3 * 24 * 3600;
 constexpr int kMaxAttempts = 3;  // network failures before a game is given up for the session
 // Bumped when matching improves: "no art" answers from an older matcher are asked again.
-constexpr int kMatcher = 2;
+constexpr int kMatcher = 3;
 
 enum class State { Idle, Queued, Decoding, Ready, Missing, Failed };
 
 struct Entry {
     State state = State::Idle;
     int attempts = 0;
+    bool custom = false;     // the cover is the player's own image
+    uint64_t epoch = 0;      // bumped when the player changes the cover: older decodes are dropped
     std::unique_ptr<Cover> cover;
 };
 
 std::unordered_map<std::string, Entry> g_entries;
 std::deque<std::string> g_queue;  // games waiting for a download, in order
-json g_index = json::object();    // game -> {"file", "id", "time"} or {"missing": true, "time"}
+// game -> {"file", "id", "name", "time", "unsure"?, "chosen"?}, {"missing": true, "time"},
+// {"sol": true} (the player wants the Sol), or {"chosen": true, "id", "name", "noart"?}
+// (the player's pick, before its art is downloaded or when it has none).
+json g_index = json::object();
 bool g_indexLoaded = false;
 std::string g_key;
 bool g_enabled = true;
@@ -54,15 +60,20 @@ bool g_keyRefused = false;        // until the key changes
 std::string g_problem;
 Clock::time_point g_retryAt{};
 uint64_t g_generation = 1;        // bumped by refetch(): stale results are dropped
+uint64_t g_version = 1;           // see version()
 std::vector<std::unique_ptr<Cover>> g_retired;  // kept a few frames after refetch()
 int g_retireFrames = 0;
 
 // One download at a time, three steps per game: find the game, pick its art, fetch the image.
+// A search the player runs is a fetch of its own (UserSearch, no game), ahead of the queue.
 struct Fetch {
-    enum class Step { Search, SearchAgain, Grids, GridsAny, Image };
+    enum class Step { Search, SearchAgain, Grids, GridsAny, Image, UserSearch };
     std::string game;
     Step step = Step::Search;
     int64_t gameId = 0;
+    std::string matched;  // SteamGridDB's name for gameId
+    int score = 0;
+    bool chosen = false;  // gameId is the player's pick
     uint64_t token = 0;
     HttpRequestHandle handle = 0;
     bool done = false;
@@ -75,9 +86,15 @@ struct Fetch {
 std::optional<Fetch> g_fetch;
 uint64_t g_nextToken = 1;
 
+std::optional<std::string> g_pendingSearch;
+bool g_searching = false;
+std::vector<cover_art::Candidate> g_results;
+std::string g_searchMessage;
+
 struct Decode {
     std::string game;
     uint64_t generation = 0;
+    uint64_t epoch = 0;
     std::future<std::optional<cover_art::Image>> result;
 };
 std::vector<Decode> g_decodes;
@@ -148,16 +165,18 @@ std::optional<std::vector<uint8_t>> read_file(const fs::path& path) {
 }
 
 void start_decode(const std::string& game, std::vector<uint8_t> bytes) {
-    g_entries[game].state = State::Decoding;
-    g_decodes.push_back({game, g_generation,
+    Entry& e = g_entries[game];
+    e.state = State::Decoding;
+    g_decodes.push_back({game, g_generation, e.epoch,
         std::async(std::launch::async, [bytes = std::move(bytes)]() {
             return cover_art::process(bytes.data(), bytes.size());
         })});
 }
 
 void start_decode_file(const std::string& game, fs::path path) {
-    g_entries[game].state = State::Decoding;
-    g_decodes.push_back({game, g_generation,
+    Entry& e = g_entries[game];
+    e.state = State::Decoding;
+    g_decodes.push_back({game, g_generation, e.epoch,
         std::async(std::launch::async, [path = std::move(path)]() -> std::optional<cover_art::Image> {
             const auto bytes = read_file(path);
             if (!bytes) {
@@ -184,12 +203,18 @@ std::optional<fs::path> custom_cover(const std::string& game) {
 // Where a game's cover comes from, now that we want it.
 void consider(const std::string& game) {
     load_index();
+    ++g_version;
     Entry& e = g_entries[game];
     if (const auto custom = custom_cover(game)) {
+        e.custom = true;
         start_decode_file(game, *custom);
         return;
     }
     const json info = g_index.value(game, json::object());
+    if (info.value("sol", false) || info.value("noart", false)) {
+        e.state = State::Missing;
+        return;
+    }
     std::error_code ec;
     if (info.contains("file") && info["file"].is_string()) {
         const fs::path file = cache_dir() / utf8_path(info["file"].get<std::string>());
@@ -251,18 +276,86 @@ bool request(const std::string& url, bool withKey) {
 }
 
 void mark_missing(const std::string& game) {
-    g_index[game] = json{{"missing", true}, {"time", unix_now()}};
+    json& info = g_index[game];
+    if (info.is_object() && info.value("chosen", false)) {
+        info["noart"] = true;  // the player's pick has no art: keep the pick, show the Sol
+        info.erase("file");
+    } else {
+        info = json{{"missing", true}, {"time", unix_now()}};
+    }
     save_index();
     g_entries[game].state = State::Missing;
 }
 
 void finish_fetch() {
     g_fetch.reset();
+    ++g_version;
+}
+
+// A cover the player replaced: kept a few frames, since a draw list may still point at it.
+void retire(Entry& e) {
+    if (e.cover) {
+        g_retired.push_back(std::move(e.cover));
+        g_retireFrames = 4;
+    }
+    const uint64_t epoch = e.epoch + 1;
+    e = Entry{};
+    e.epoch = epoch;
+}
+
+void cancel_fetch_for(const std::string& game) {
+    if (g_fetch && g_fetch->game == game && g_fetch->step != Fetch::Step::UserSearch) {
+        if (g_fetch->handle != 0 && svc_http != nullptr) {
+            svc_http->cancel(mod_ctx, g_fetch->handle);
+        }
+        g_fetch.reset();
+    }
+    std::erase(g_queue, game);
+}
+
+void remove_file(const json& info) {
+    std::error_code ec;
+    if (info.is_object() && info.contains("file") && info["file"].is_string()) {
+        fs::remove(cache_dir() / utf8_path(info["file"].get<std::string>()), ec);
+    }
+}
+
+// The player's search came back.
+void finish_user_search() {
+    const Fetch& f = *g_fetch;
+    g_searching = false;
+    g_results.clear();
+    g_searchMessage.clear();
+    if (f.error != HTTP_ERROR_NONE || f.status == 0) {
+        g_searchMessage = "Couldn't reach SteamGridDB" + (f.message.empty() ? std::string{"."} : ": " + f.message);
+    } else if (f.status == 401 || f.status == 403) {
+        g_searchMessage = "SteamGridDB didn't accept the API key.";
+    } else if (f.status == 429) {
+        g_searchMessage = "SteamGridDB asked us to slow down. Try again in a minute.";
+    } else if (f.status == 404) {
+        g_searchMessage = "Nothing on SteamGridDB by that name.";
+    } else if (f.status != 200) {
+        g_searchMessage = fmt::format("SteamGridDB answered {}.", f.status);
+    } else {
+        try {
+            g_results = cover_art::candidates(json::parse(f.body));
+        } catch (const std::exception&) {
+            g_searchMessage = "SteamGridDB's answer didn't make sense.";
+        }
+        if (g_results.empty() && g_searchMessage.empty()) {
+            g_searchMessage = "Nothing on SteamGridDB by that name.";
+        }
+    }
+    finish_fetch();
 }
 
 // A step's reply arrived: move on to the next step, or deal with the failure.
 void advance() {
     Fetch& f = *g_fetch;
+    if (f.step == Fetch::Step::UserSearch) {
+        finish_user_search();
+        return;
+    }
     const std::string game = f.game;
     Entry& e = g_entries[game];
 
@@ -321,8 +414,8 @@ void advance() {
     switch (f.step) {
     case Fetch::Step::Search:
     case Fetch::Step::SearchAgain: {
-        const auto id = cover_art::pick_game(game, reply);
-        if (!id) {
+        const auto match = cover_art::match_game(game, reply);
+        if (!match) {
             const std::string shorter = cover_art::fallback_term(game);
             if (f.step == Fetch::Step::Search && !shorter.empty()) {
                 // "Resident Evil 2 Remake" is listed as "Resident Evil 2": ask for that.
@@ -339,7 +432,9 @@ void advance() {
             finish_fetch();
             return;
         }
-        f.gameId = *id;
+        f.gameId = match->id;
+        f.matched = match->name;
+        f.score = match->score;
         f.step = Fetch::Step::Grids;
         if (!request(fmt::format("https://www.steamgriddb.com/api/v2/grids/game/{}?dimensions="
                                  "600x900,342x482,660x930&types=static&nsfw=false&humor=false"
@@ -390,7 +485,13 @@ void advance() {
             std::ofstream out(cache_dir() / utf8_path(file), std::ios::binary | std::ios::trunc);
             out.write(f.body.data(), static_cast<std::streamsize>(f.body.size()));
         }
-        g_index[game] = json{{"file", file}, {"id", f.gameId}, {"time", unix_now()}};
+        json info{{"file", file}, {"id", f.gameId}, {"name", f.matched}, {"time", unix_now()}};
+        if (f.chosen) {
+            info["chosen"] = true;
+        } else if (f.score < cover_art::kConfidentScore) {
+            info["unsure"] = true;
+        }
+        g_index[game] = std::move(info);
         save_index();
         finish_fetch();
         start_decode(game, std::move(bytes));
@@ -400,6 +501,20 @@ void advance() {
 }
 
 void start_next() {
+    if (g_pendingSearch) {
+        g_fetch.emplace();
+        g_fetch->step = Fetch::Step::UserSearch;
+        const std::string url = "https://www.steamgriddb.com/api/v2/search/autocomplete/" +
+                                cover_art::url_encode(*g_pendingSearch);
+        g_pendingSearch.reset();
+        if (!request(url, true)) {
+            g_fetch.reset();
+            g_searching = false;
+            g_searchMessage = g_problem;
+            ++g_version;
+        }
+        return;
+    }
     while (!g_queue.empty()) {
         const std::string game = g_queue.front();
         g_queue.pop_front();
@@ -409,8 +524,20 @@ void start_next() {
         g_fetch.emplace();
         g_fetch->game = game;
         g_fetch->step = Fetch::Step::Search;
-        const std::string url = "https://www.steamgriddb.com/api/v2/search/autocomplete/" +
-                                cover_art::url_encode(cover_art::search_term(game));
+        std::string url = "https://www.steamgriddb.com/api/v2/search/autocomplete/" +
+                          cover_art::url_encode(cover_art::search_term(game));
+        // The player's pick: straight to its art.
+        const json info = g_index.value(game, json::object());
+        if (info.value("chosen", false) && info.contains("id") && info["id"].is_number_integer()) {
+            g_fetch->step = Fetch::Step::Grids;
+            g_fetch->gameId = info["id"].get<int64_t>();
+            g_fetch->matched = info.value("name", std::string{});
+            g_fetch->chosen = true;
+            url = fmt::format("https://www.steamgriddb.com/api/v2/grids/game/{}?dimensions="
+                              "600x900,342x482,660x930&types=static&nsfw=false&humor=false"
+                              "&epilepsy=false",
+                g_fetch->gameId);
+        }
         if (!request(url, true)) {
             g_queue.push_front(game);
             g_fetch.reset();
@@ -428,11 +555,13 @@ void poll_decodes() {
         }
         std::optional<cover_art::Image> image = it->result.get();
         const std::string game = it->game;
+        const uint64_t epoch = it->epoch;
         const bool current = it->generation == g_generation;
         it = g_decodes.erase(it);
-        if (!current) {
+        if (!current || g_entries[game].epoch != epoch) {
             continue;
         }
+        ++g_version;
         Entry& e = g_entries[game];
         if (!image) {
             // A cached file that doesn't decode: forget it so the next session downloads again.
@@ -541,6 +670,14 @@ std::string status() {
         if (missing > 0) {
             s += fmt::format(" No art for {} (they stay Sols).", missing);
         }
+        int unsure = 0;
+        for (const auto& g : games()) {
+            unsure += g.unsure;
+        }
+        if (unsure > 0) {
+            s += fmt::format(" {} {} a best guess: check on the Covers tab.", unsure,
+                unsure == 1 ? "is" : "are");
+        }
     }
     if (pending > 0 && g_key.empty()) {
         s += " Add a SteamGridDB API key to download the rest.";
@@ -559,27 +696,127 @@ void refetch() {
     g_queue.clear();
     ++g_generation;
     load_index();
-    std::error_code ec;
+    json kept = json::object();
     for (const auto& [game, info] : g_index.items()) {
-        if (info.contains("file") && info["file"].is_string()) {
-            fs::remove(cache_dir() / utf8_path(info["file"].get<std::string>()), ec);
+        remove_file(info);
+        if (info.is_object() && (info.value("chosen", false) || info.value("sol", false))) {
+            json pick = info;  // the player's choices stay; their art downloads again
+            pick.erase("file");
+            pick.erase("noart");
+            kept[game] = std::move(pick);
         }
     }
-    g_index = json::object();
+    g_index = std::move(kept);
     save_index();
+    ++g_version;
     g_keyRefused = false;
     g_problem.clear();
     g_retryAt = {};
     std::vector<std::string> games;
     for (auto& [game, e] : g_entries) {
-        if (e.cover) {
-            g_retired.push_back(std::move(e.cover));  // a draw list may still point at it
-        }
-        e = Entry{};
+        retire(e);
         games.push_back(game);
     }
-    g_retireFrames = 4;
     want(games);
+}
+
+std::vector<GameCover> games() {
+    std::vector<GameCover> out;
+    for (const auto& [game, e] : g_entries) {
+        const json info = g_index.value(game, json::object());
+        GameCover g;
+        g.game = game;
+        g.solChosen = info.value("sol", false);
+        switch (e.state) {
+        case State::Ready:
+            g.source = e.custom                      ? Source::Custom
+                       : info.value("chosen", false) ? Source::Chosen
+                                                     : Source::Automatic;
+            break;
+        case State::Missing:
+        case State::Failed: g.source = Source::Sol; break;
+        default: g.source = Source::Pending; break;
+        }
+        if (!e.custom && !g.solChosen) {
+            g.matched = info.value("name", std::string{});
+            g.unsure = e.state == State::Ready && info.value("unsure", false);
+        }
+        out.push_back(std::move(g));
+    }
+    std::sort(out.begin(), out.end(),
+        [](const GameCover& a, const GameCover& b) { return a.game < b.game; });
+    return out;
+}
+
+uint64_t version() {
+    return g_version;
+}
+
+void search(const std::string& term) {
+    g_results.clear();
+    g_searchMessage.clear();
+    ++g_version;
+    if (term.empty()) {
+        return;
+    }
+    if (g_key.empty()) {
+        g_searchMessage = "Searching needs your SteamGridDB API key (on the Status tab).";
+        return;
+    }
+    if (g_fetch && g_fetch->step == Fetch::Step::UserSearch) {
+        if (g_fetch->handle != 0 && svc_http != nullptr) {
+            svc_http->cancel(mod_ctx, g_fetch->handle);  // superseded by this one
+        }
+        g_fetch.reset();
+    }
+    g_pendingSearch = term;
+    g_searching = true;
+}
+
+bool searching() {
+    return g_searching;
+}
+
+const std::vector<cover_art::Candidate>& results() {
+    return g_results;
+}
+
+const std::string& search_message() {
+    return g_searchMessage;
+}
+
+void choose(const std::string& game, int64_t id, const std::string& name) {
+    load_index();
+    cancel_fetch_for(game);
+    remove_file(g_index.value(game, json::object()));
+    g_index[game] = json{{"chosen", true}, {"id", id}, {"name", name}};
+    save_index();
+    retire(g_entries[game]);
+    consider(game);
+}
+
+void use_sol(const std::string& game) {
+    load_index();
+    cancel_fetch_for(game);
+    remove_file(g_index.value(game, json::object()));
+    g_index[game] = json{{"sol", true}};
+    save_index();
+    retire(g_entries[game]);
+    consider(game);
+}
+
+void automatic(const std::string& game) {
+    load_index();
+    cancel_fetch_for(game);
+    remove_file(g_index.value(game, json::object()));
+    g_index.erase(game);
+    save_index();
+    retire(g_entries[game]);
+    consider(game);
+}
+
+std::string custom_path(const std::string& game) {
+    return (cache_dir() / "custom" / utf8_path(game + ".png")).generic_string();
 }
 
 }  // namespace ap::covers
