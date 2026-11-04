@@ -185,7 +185,7 @@ b_embed(randomizer_embeds "src/ap/ca_bundle.pem")
 
 # Versioning
 set(RANDOMIZER_VERSION "1.0.6")
-set(ARCHIPELAGO_VERSION "1.8.0-beta.1")
+set(ARCHIPELAGO_VERSION "1.8.0")
 find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(

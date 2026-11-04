@@ -11,9 +11,7 @@ Then in Dusklight: use the arrows on the Play button to pick **Archipelago**, st
 
 Needs Dusklight 2.0.1 or newer. This mod carries its own copy of the randomizer, so Dusklight's built-in Randomizer doesn't need updating or removing; the two don't interfere.
 
-## What's new in 1.8.0 (beta 1)
-
-This is a **prerelease** for testing. Please report anything odd on the issues it came from.
+## What's new in 1.8.0
 
 - **Tracker strikes out checks nobody needs** (#3). When a player finishes their game, every check of yours holding one of their items is crossed out as "not needed" and left off the in-logic list. It updates live while you play. Turn it off on the Status tab.
 - **Held items keep their own game box** (#4). Another Archipelago item spawning nearby while Link held one up could swap its cover (and its text and jingle) for the other item's. The held item now knows its own check.
